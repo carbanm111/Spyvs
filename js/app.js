@@ -1,7 +1,7 @@
 /**
  * SPY VS. SPY // AUDIO TERMINAL - MODERN CLEAN CLIENT APPLICATION
- * Features: Zero-latency Web Audio API, Canvas Visualizer, In-Browser ZIP Extractor (JSZip),
- * Cloudflare/CORS-resilient URL fetcher, IndexedDB persistence, Keyboard Hotkeys.
+ * Features: Zero-latency Web Audio API with seamless HTML5 Audio fallback (supports file:// and http/https),
+ * Canvas Visualizer, In-Browser ZIP Extractor (JSZip), IndexedDB persistence, Keyboard Hotkeys.
  */
 
 (function () {
@@ -46,7 +46,8 @@
     masterGain: null,
     analyser: null,
     audioBufferCache: new Map(), // soundId -> AudioBuffer
-    activeSources: new Map(),    // soundId -> { source, startTime, duration, rafId, loop }
+    html5AudioCache: new Map(),  // soundId -> HTMLAudioElement
+    activeSources: new Map(),    // soundId -> { type, source|audio, startTime, duration, rafId, loop }
     customSounds: [],            // Custom imported items
     allSounds: [],               // Combined default + custom
     favorites: new Set(JSON.parse(localStorage.getItem('spy_soundboard_favorites') || '[]')),
@@ -124,20 +125,42 @@
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return null;
 
-    state.audioCtx = new AudioContextClass();
+    try {
+      state.audioCtx = new AudioContextClass();
 
-    state.masterGain = state.audioCtx.createGain();
-    state.masterGain.gain.setValueAtTime(state.isMuted ? 0 : state.volume, state.audioCtx.currentTime);
+      state.masterGain = state.audioCtx.createGain();
+      state.masterGain.gain.setValueAtTime(state.isMuted ? 0 : state.volume, state.audioCtx.currentTime);
 
-    state.analyser = state.audioCtx.createAnalyser();
-    state.analyser.fftSize = 128;
-    state.analyser.smoothingTimeConstant = 0.8;
+      state.analyser = state.audioCtx.createAnalyser();
+      state.analyser.fftSize = 128;
+      state.analyser.smoothingTimeConstant = 0.8;
 
-    state.masterGain.connect(state.analyser);
-    state.analyser.connect(state.audioCtx.destination);
+      state.masterGain.connect(state.analyser);
+      state.analyser.connect(state.audioCtx.destination);
 
-    initVisualizer();
+      initVisualizer();
+    } catch (e) {
+      console.warn('AudioContext initialization note:', e);
+    }
     return state.audioCtx;
+  }
+
+  // Cross-browser safe decodeAudioData (handles Safari callback & promise variations)
+  function decodeAudioDataSafe(audioCtx, arrayBuffer) {
+    return new Promise((resolve, reject) => {
+      try {
+        const res = audioCtx.decodeAudioData(
+          arrayBuffer,
+          (decoded) => resolve(decoded),
+          (err) => reject(err)
+        );
+        if (res && typeof res.then === 'function') {
+          res.then(resolve).catch(reject);
+        }
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 
   async function loadAudioBuffer(sound) {
@@ -151,7 +174,6 @@
     try {
       let arrayBuffer;
       if (sound.audioData) {
-        // Blob or ArrayBuffer from IndexedDB or ZIP
         arrayBuffer = sound.audioData instanceof ArrayBuffer 
           ? sound.audioData 
           : await sound.audioData.arrayBuffer();
@@ -160,16 +182,15 @@
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         arrayBuffer = await resp.arrayBuffer();
       } else {
-        throw new Error('No audio source provided');
+        return null;
       }
 
-      // decodeAudioData consumes the arrayBuffer, so slice a copy if we need to reuse it
       const copy = arrayBuffer.slice(0);
-      const audioBuffer = await state.audioCtx.decodeAudioData(copy);
+      const audioBuffer = await decodeAudioDataSafe(state.audioCtx, copy);
       state.audioBufferCache.set(sound.id, audioBuffer);
       return audioBuffer;
     } catch (err) {
-      console.error(`Failed to load audio for ${sound.id}:`, err);
+      // Under file:// or strict CORS, fetch fails — fallback handles this gracefully
       return null;
     }
   }
@@ -181,17 +202,42 @@
 
     for (let i = 0; i < total; i++) {
       const sound = state.allSounds[i];
+      let cached = false;
+
       try {
+        // 1. Attempt Web Audio Buffer pre-cache
         const buf = await loadAudioBuffer(sound);
-        if (buf && !sound.duration) {
-          sound.duration = Math.round(buf.duration * 100) / 100;
+        if (buf) {
+          if (!sound.duration) {
+            sound.duration = Math.round(buf.duration * 100) / 100;
+          }
+          cached = true;
         }
-        state.loadedCount++;
-        const card = document.querySelector(`.sound-card[data-id="${CSS.escape(sound.id)}"]`);
-        if (card) card.classList.add('cached');
+
+        // 2. Also pre-load HTML5 audio element for instant fallback
+        if (sound.file) {
+          const audio = new Audio();
+          audio.src = sound.file;
+          audio.preload = 'auto';
+          audio.addEventListener('loadedmetadata', () => {
+            if (!sound.duration && audio.duration && !isNaN(audio.duration) && audio.duration !== Infinity) {
+              sound.duration = Math.round(audio.duration * 100) / 100;
+              const cardDur = document.querySelector(`.sound-card[data-id="${CSS.escape(sound.id)}"] .card-duration`);
+              if (cardDur) cardDur.textContent = `${sound.duration.toFixed(1)}s`;
+            }
+          }, { once: true });
+          audio.load();
+          cached = true;
+        }
+
+        if (cached) {
+          state.loadedCount++;
+          const card = document.querySelector(`.sound-card[data-id="${CSS.escape(sound.id)}"]`);
+          if (card) card.classList.add('cached');
+        }
 
         if (statusEl) {
-          if (state.loadedCount === total) {
+          if (state.loadedCount >= total) {
             statusEl.innerHTML = `All sounds cached // Ready (${state.loadedCount}/${total})`;
             statusEl.style.color = 'var(--accent)';
           } else {
@@ -199,22 +245,24 @@
           }
         }
       } catch (e) {
-        console.warn('Pre-cache error:', e);
+        console.warn('Pre-cache item note:', e);
       }
     }
   }
 
-  // Play Sound Node
+  // Play Sound Node: Uses Web Audio API when available, seamlessly falls back to HTML5 Audio
   async function playSound(soundId) {
     initAudioContext();
-    if (state.audioCtx.state === 'suspended') {
-      await state.audioCtx.resume();
+    if (state.audioCtx && state.audioCtx.state === 'suspended') {
+      try {
+        await state.audioCtx.resume();
+      } catch (e) {}
     }
 
     const sound = state.allSounds.find(s => s.id === soundId);
     if (!sound) return;
 
-    // If already playing, toggle stop
+    // If already playing, clicking again stops it immediately
     if (state.activeSources.has(soundId)) {
       stopSound(soundId);
       return;
@@ -225,12 +273,20 @@
       stopAllSounds();
     }
 
+    // Try Web Audio API first
     const buffer = await loadAudioBuffer(sound);
-    if (!buffer) {
-      showToast(`⚠️ Could not decode audio: ${sound.name}`);
-      return;
-    }
 
+    if (buffer && state.audioCtx) {
+      playViaWebAudio(sound, buffer);
+    } else {
+      // Fallback to HTML5 Audio (guarantees playback under file://, CORS restriction, or older engines)
+      playViaHtml5Audio(sound);
+    }
+  }
+
+  // --- PLAYBACK ENGINE 1: WEB AUDIO API ---
+  function playViaWebAudio(sound, buffer) {
+    const soundId = sound.id;
     const source = state.audioCtx.createBufferSource();
     source.buffer = buffer;
     source.playbackRate.value = state.currentSpeed;
@@ -244,15 +300,14 @@
     source.start(0);
 
     const card = document.querySelector(`.sound-card[data-id="${CSS.escape(soundId)}"]`);
-    if (card) {
-      card.classList.add('playing');
-    }
+    if (card) card.classList.add('playing');
 
-    // Update active telemetry
     updateActiveTelemetry();
 
     // Progress Bar Animation
     const progressBar = card ? card.querySelector('.card-progress-bar') : null;
+    let rafId = null;
+
     function updateProgress() {
       if (!state.activeSources.has(soundId)) return;
       const elapsed = state.audioCtx.currentTime - startTime;
@@ -261,15 +316,14 @@
         progressBar.style.width = `${percent}%`;
       }
       if (elapsed < effectiveDuration || source.loop) {
-        const rafId = requestAnimationFrame(updateProgress);
+        rafId = requestAnimationFrame(updateProgress);
         const item = state.activeSources.get(soundId);
         if (item) item.rafId = rafId;
       }
     }
-    const rafId = requestAnimationFrame(updateProgress);
+    rafId = requestAnimationFrame(updateProgress);
 
     source.onended = () => {
-      // Loop check
       if (source.loop && state.activeSources.has(soundId)) {
         return;
       }
@@ -277,6 +331,7 @@
     };
 
     state.activeSources.set(soundId, {
+      type: 'webAudio',
       source,
       startTime,
       duration: effectiveDuration,
@@ -285,17 +340,104 @@
     });
   }
 
+  // --- PLAYBACK ENGINE 2: HTML5 AUDIO FALLBACK ---
+  function playViaHtml5Audio(sound) {
+    const soundId = sound.id;
+    let audioSrc = sound.file;
+
+    if (!audioSrc && sound.audioData) {
+      const blob = sound.audioData instanceof Blob 
+        ? sound.audioData 
+        : new Blob([sound.audioData], { type: 'audio/wav' });
+      audioSrc = URL.createObjectURL(blob);
+    }
+
+    if (!audioSrc) {
+      showToast(`⚠️ Could not load audio for ${sound.name}`);
+      return;
+    }
+
+    const audio = new Audio(audioSrc);
+    audio.playbackRate = state.currentSpeed;
+    audio.volume = state.isMuted ? 0 : state.volume;
+    audio.loop = state.loopingSounds.has(soundId);
+
+    // Attempt routing into Web Audio graph for live visualizer if allowed by browser
+    let mediaNode = null;
+    if (state.audioCtx && state.masterGain) {
+      try {
+        mediaNode = state.audioCtx.createMediaElementSource(audio);
+        mediaNode.connect(state.masterGain);
+      } catch (e) {
+        // file:// or cross-origin policy might prevent createMediaElementSource; plays directly through HTML5
+      }
+    }
+
+    const card = document.querySelector(`.sound-card[data-id="${CSS.escape(soundId)}"]`);
+    if (card) card.classList.add('playing');
+
+    updateActiveTelemetry();
+
+    const progressBar = card ? card.querySelector('.card-progress-bar') : null;
+    let rafId = null;
+
+    function trackProgress() {
+      if (!state.activeSources.has(soundId)) return;
+      if (audio.duration && !isNaN(audio.duration) && audio.duration > 0) {
+        const percent = Math.min(100, (audio.currentTime / audio.duration) * 100);
+        if (progressBar) progressBar.style.width = `${percent}%`;
+      }
+      rafId = requestAnimationFrame(trackProgress);
+      const item = state.activeSources.get(soundId);
+      if (item) item.rafId = rafId;
+    }
+    rafId = requestAnimationFrame(trackProgress);
+
+    audio.play().catch(err => {
+      console.warn('Playback error:', err);
+      stopSound(soundId, false);
+      showToast(`⚠️ Playback error: Click anywhere on page first to enable audio.`);
+    });
+
+    audio.onended = () => {
+      if (!audio.loop) {
+        stopSound(soundId, false);
+      }
+    };
+
+    state.activeSources.set(soundId, {
+      type: 'html5',
+      audio: audio,
+      mediaNode: mediaNode,
+      rafId: rafId,
+      loop: audio.loop
+    });
+  }
+
   function stopSound(soundId, cancelNode = true) {
     if (!state.activeSources.has(soundId)) return;
     const active = state.activeSources.get(soundId);
 
     if (cancelNode) {
-      try {
-        active.source.stop();
-        active.source.disconnect();
-      } catch (e) {}
+      if (active.type === 'webAudio') {
+        try {
+          active.source.stop();
+          active.source.disconnect();
+        } catch (e) {}
+      } else if (active.type === 'html5') {
+        try {
+          active.audio.pause();
+          active.audio.currentTime = 0;
+          if (active.mediaNode) {
+            active.mediaNode.disconnect();
+          }
+        } catch (e) {}
+      }
     }
-    cancelAnimationFrame(active.rafId);
+
+    if (active.rafId) {
+      cancelAnimationFrame(active.rafId);
+    }
     state.activeSources.delete(soundId);
 
     const card = document.querySelector(`.sound-card[data-id="${CSS.escape(soundId)}"]`);
@@ -309,11 +451,23 @@
 
   function stopAllSounds() {
     state.activeSources.forEach((active, id) => {
-      try {
-        active.source.stop();
-        active.source.disconnect();
-      } catch (e) {}
-      cancelAnimationFrame(active.rafId);
+      if (active.type === 'webAudio') {
+        try {
+          active.source.stop();
+          active.source.disconnect();
+        } catch (e) {}
+      } else if (active.type === 'html5') {
+        try {
+          active.audio.pause();
+          active.audio.currentTime = 0;
+          if (active.mediaNode) {
+            active.mediaNode.disconnect();
+          }
+        } catch (e) {}
+      }
+      if (active.rafId) {
+        cancelAnimationFrame(active.rafId);
+      }
     });
     state.activeSources.clear();
 
@@ -363,10 +517,19 @@
 
       state.analyser.getByteFrequencyData(dataArray);
 
-      // Check if there is active audio
+      // Check if there is active audio from Web Audio API
       let sum = 0;
       for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-      const isAudible = sum > 10;
+      let isAudible = sum > 10;
+
+      // If active sounds are playing via HTML5 Audio under file://, animate synthetic waveform
+      if (!isAudible && state.activeSources.size > 0) {
+        isAudible = true;
+        const now = Date.now() * 0.008;
+        for (let i = 0; i < bufferLength; i++) {
+          dataArray[i] = Math.floor(120 + Math.sin(now + i * 0.4) * 70 + Math.cos(now * 1.5 + i) * 30);
+        }
+      }
 
       if (!isAudible) {
         // Draw idle radar wave
@@ -608,7 +771,12 @@
     }
     // Update live source loop state if playing
     if (state.activeSources.has(soundId)) {
-      state.activeSources.get(soundId).source.loop = state.loopingSounds.has(soundId);
+      const active = state.activeSources.get(soundId);
+      if (active.type === 'webAudio') {
+        active.source.loop = state.loopingSounds.has(soundId);
+      } else if (active.type === 'html5') {
+        active.audio.loop = state.loopingSounds.has(soundId);
+      }
     }
     renderSoundboard();
   }
@@ -759,16 +927,14 @@
           duration: 0
         };
 
-        // Cache buffer to precalculate duration
+        // Precalculate duration if possible
         initAudioContext();
         if (state.audioCtx) {
           try {
-            const buf = await state.audioCtx.decodeAudioData(arrayBuf.slice(0));
+            const buf = await decodeAudioDataSafe(state.audioCtx, arrayBuf.slice(0));
             newSound.duration = Math.round(buf.duration * 100) / 100;
             state.audioBufferCache.set(newSound.id, buf);
-          } catch (e) {
-            console.warn('Decode error for', filename, e);
-          }
+          } catch (e) {}
         }
 
         await saveCustomSoundToDB(newSound);
@@ -809,7 +975,7 @@
       initAudioContext();
       if (state.audioCtx) {
         try {
-          const buf = await state.audioCtx.decodeAudioData(arrayBuf.slice(0));
+          const buf = await decodeAudioDataSafe(state.audioCtx, arrayBuf.slice(0));
           newSound.duration = Math.round(buf.duration * 100) / 100;
           state.audioBufferCache.set(newSound.id, buf);
         } catch (e) {}
@@ -899,7 +1065,7 @@
       initAudioContext();
       if (state.audioCtx) {
         try {
-          const buf = await state.audioCtx.decodeAudioData(arrayBuf.slice(0));
+          const buf = await decodeAudioDataSafe(state.audioCtx, arrayBuf.slice(0));
           newSound.duration = Math.round(buf.duration * 100) / 100;
           state.audioBufferCache.set(newSound.id, buf);
         } catch (e) {}
@@ -1210,17 +1376,28 @@
         if (state.masterGain && state.audioCtx) {
           state.masterGain.gain.setValueAtTime(state.volume, state.audioCtx.currentTime);
         }
+        state.activeSources.forEach(active => {
+          if (active.type === 'html5' && active.audio) {
+            active.audio.volume = state.volume;
+          }
+        });
         if (volBtn) volBtn.textContent = state.volume === 0 ? '🔇' : '🔊';
       });
     }
     if (volBtn) {
       volBtn.addEventListener('click', () => {
         state.isMuted = !state.isMuted;
+        const currentVol = state.isMuted ? 0 : state.volume;
         if (state.masterGain && state.audioCtx) {
-          state.masterGain.gain.setValueAtTime(state.isMuted ? 0 : state.volume, state.audioCtx.currentTime);
+          state.masterGain.gain.setValueAtTime(currentVol, state.audioCtx.currentTime);
         }
+        state.activeSources.forEach(active => {
+          if (active.type === 'html5' && active.audio) {
+            active.audio.volume = currentVol;
+          }
+        });
         volBtn.textContent = state.isMuted ? '🔇' : '🔊';
-        if (volSlider) volSlider.value = state.isMuted ? 0 : state.volume;
+        if (volSlider) volSlider.value = currentVol;
       });
     }
 
@@ -1233,7 +1410,11 @@
 
         // Update currently active sources
         state.activeSources.forEach(active => {
-          active.source.playbackRate.value = state.currentSpeed;
+          if (active.type === 'webAudio' && active.source) {
+            active.source.playbackRate.value = state.currentSpeed;
+          } else if (active.type === 'html5' && active.audio) {
+            active.audio.playbackRate = state.currentSpeed;
+          }
         });
       });
     });
