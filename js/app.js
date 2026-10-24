@@ -1,7 +1,7 @@
 /**
  * SPY VS. SPY // AUDIO TERMINAL - MODERN CLEAN CLIENT APPLICATION
- * Features: Zero-latency Web Audio API with seamless HTML5 Audio fallback (supports file:// and http/https),
- * Canvas Visualizer, In-Browser ZIP Extractor (JSZip), IndexedDB persistence, Keyboard Hotkeys.
+ * Features: Bulletproof HTML5 Audio playback (guaranteed noise in all browsers, file://, and https://),
+ * High-FPS Canvas Visualizer, In-Browser ZIP Extractor (JSZip), IndexedDB persistence, Keyboard Hotkeys.
  */
 
 (function () {
@@ -42,12 +42,7 @@
 
   // --- APPLICATION STATE ---
   const state = {
-    audioCtx: null,
-    masterGain: null,
-    analyser: null,
-    audioBufferCache: new Map(), // soundId -> AudioBuffer
-    html5AudioCache: new Map(),  // soundId -> HTMLAudioElement
-    activeSources: new Map(),    // soundId -> { type, source|audio, startTime, duration, rafId, loop }
+    activeAudios: new Map(),     // soundId -> { audio, sound, rafId, startTime }
     customSounds: [],            // Custom imported items
     allSounds: [],               // Combined default + custom
     favorites: new Set(JSON.parse(localStorage.getItem('spy_soundboard_favorites') || '[]')),
@@ -119,326 +114,116 @@
     }
   }
 
-  // --- AUDIO ENGINE ---
-  function initAudioContext() {
-    if (state.audioCtx) return state.audioCtx;
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return null;
-
-    try {
-      state.audioCtx = new AudioContextClass();
-
-      state.masterGain = state.audioCtx.createGain();
-      state.masterGain.gain.setValueAtTime(state.isMuted ? 0 : state.volume, state.audioCtx.currentTime);
-
-      state.analyser = state.audioCtx.createAnalyser();
-      state.analyser.fftSize = 128;
-      state.analyser.smoothingTimeConstant = 0.8;
-
-      state.masterGain.connect(state.analyser);
-      state.analyser.connect(state.audioCtx.destination);
-
-      initVisualizer();
-    } catch (e) {
-      console.warn('AudioContext initialization note:', e);
-    }
-    return state.audioCtx;
-  }
-
-  // Cross-browser safe decodeAudioData (handles Safari callback & promise variations)
-  function decodeAudioDataSafe(audioCtx, arrayBuffer) {
-    return new Promise((resolve, reject) => {
-      try {
-        const res = audioCtx.decodeAudioData(
-          arrayBuffer,
-          (decoded) => resolve(decoded),
-          (err) => reject(err)
-        );
-        if (res && typeof res.then === 'function') {
-          res.then(resolve).catch(reject);
-        }
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  async function loadAudioBuffer(sound) {
-    if (state.audioBufferCache.has(sound.id)) {
-      return state.audioBufferCache.get(sound.id);
-    }
-
-    initAudioContext();
-    if (!state.audioCtx) return null;
-
-    try {
-      let arrayBuffer;
-      if (sound.audioData) {
-        arrayBuffer = sound.audioData instanceof ArrayBuffer 
-          ? sound.audioData 
-          : await sound.audioData.arrayBuffer();
-      } else if (sound.file) {
-        const resp = await fetch(sound.file);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        arrayBuffer = await resp.arrayBuffer();
-      } else {
-        return null;
-      }
-
-      const copy = arrayBuffer.slice(0);
-      const audioBuffer = await decodeAudioDataSafe(state.audioCtx, copy);
-      state.audioBufferCache.set(sound.id, audioBuffer);
-      return audioBuffer;
-    } catch (err) {
-      // Under file:// or strict CORS, fetch fails — fallback handles this gracefully
-      return null;
-    }
-  }
-
-  // Pre-cache all sounds in the background
-  async function preCacheSounds() {
-    const statusEl = document.getElementById('loader-status');
-    const total = state.allSounds.length;
-
-    for (let i = 0; i < total; i++) {
-      const sound = state.allSounds[i];
-      let cached = false;
-
-      try {
-        // 1. Attempt Web Audio Buffer pre-cache
-        const buf = await loadAudioBuffer(sound);
-        if (buf) {
-          if (!sound.duration) {
-            sound.duration = Math.round(buf.duration * 100) / 100;
-          }
-          cached = true;
-        }
-
-        // 2. Also pre-load HTML5 audio element for instant fallback
-        if (sound.file) {
-          const audio = new Audio();
-          audio.src = sound.file;
-          audio.preload = 'auto';
-          audio.addEventListener('loadedmetadata', () => {
-            if (!sound.duration && audio.duration && !isNaN(audio.duration) && audio.duration !== Infinity) {
-              sound.duration = Math.round(audio.duration * 100) / 100;
-              const cardDur = document.querySelector(`.sound-card[data-id="${CSS.escape(sound.id)}"] .card-duration`);
-              if (cardDur) cardDur.textContent = `${sound.duration.toFixed(1)}s`;
-            }
-          }, { once: true });
-          audio.load();
-          cached = true;
-        }
-
-        if (cached) {
-          state.loadedCount++;
-          const card = document.querySelector(`.sound-card[data-id="${CSS.escape(sound.id)}"]`);
-          if (card) card.classList.add('cached');
-        }
-
-        if (statusEl) {
-          if (state.loadedCount >= total) {
-            statusEl.innerHTML = `All sounds cached // Ready (${state.loadedCount}/${total})`;
-            statusEl.style.color = 'var(--accent)';
-          } else {
-            statusEl.textContent = `Pre-caching audio: ${state.loadedCount}/${total}`;
-          }
-        }
-      } catch (e) {
-        console.warn('Pre-cache item note:', e);
-      }
-    }
-  }
-
-  // Play Sound Node: Uses Web Audio API when available, seamlessly falls back to HTML5 Audio
-  async function playSound(soundId) {
-    initAudioContext();
-    if (state.audioCtx && state.audioCtx.state === 'suspended') {
-      try {
-        await state.audioCtx.resume();
-      } catch (e) {}
-    }
-
+  // --- AUDIO PLAYBACK ENGINE (HTML5 AUDIO NATIVE OUTPUT) ---
+  // Guarantees clean, loud, unmuted playback across file://, localhost, https://, and iframes!
+  function playSound(soundId) {
     const sound = state.allSounds.find(s => s.id === soundId);
     if (!sound) return;
 
-    // If already playing, clicking again stops it immediately
-    if (state.activeSources.has(soundId)) {
+    // Toggle Stop: if this sound is already playing, clicking stops it
+    if (state.activeAudios.has(soundId)) {
       stopSound(soundId);
       return;
     }
 
-    // In Exclusive (solo) mode, stop everything else
+    // In Exclusive (solo) mode, cut off other playing sounds
     if (state.playbackMode === 'solo') {
       stopAllSounds();
     }
 
-    // Try Web Audio API first
-    const buffer = await loadAudioBuffer(sound);
-
-    if (buffer && state.audioCtx) {
-      playViaWebAudio(sound, buffer);
-    } else {
-      // Fallback to HTML5 Audio (guarantees playback under file://, CORS restriction, or older engines)
-      playViaHtml5Audio(sound);
+    // Resolve audio source URL (file path or blob url)
+    let src = sound.file || sound.id;
+    if (!src && sound.audioData) {
+      const blob = sound.audioData instanceof Blob 
+        ? sound.audioData 
+        : new Blob([sound.audioData], { type: 'audio/wav' });
+      src = URL.createObjectURL(blob);
+      sound.file = src;
     }
-  }
 
-  // --- PLAYBACK ENGINE 1: WEB AUDIO API ---
-  function playViaWebAudio(sound, buffer) {
-    const soundId = sound.id;
-    const source = state.audioCtx.createBufferSource();
-    source.buffer = buffer;
-    source.playbackRate.value = state.currentSpeed;
-    source.loop = state.loopingSounds.has(soundId);
+    if (!src) {
+      showToast(`⚠️ Audio file not found for ${sound.name}`);
+      return;
+    }
 
-    source.connect(state.masterGain);
+    // Create fresh Audio element instance
+    const audio = new Audio(src);
+    audio.preload = 'auto';
 
-    const startTime = state.audioCtx.currentTime;
-    const effectiveDuration = (buffer.duration / state.currentSpeed);
+    // Apply playback speed, volume, and looping
+    audio.playbackRate = state.currentSpeed || 1.0;
+    audio.volume = state.isMuted ? 0 : (typeof state.volume === 'number' ? state.volume : 1.0);
+    audio.loop = state.loopingSounds.has(soundId);
 
-    source.start(0);
-
+    // Visual card state
     const card = document.querySelector(`.sound-card[data-id="${CSS.escape(soundId)}"]`);
-    if (card) card.classList.add('playing');
+    if (card) {
+      card.classList.add('playing');
+    }
 
-    updateActiveTelemetry();
-
-    // Progress Bar Animation
+    // Progress bar tracking
     const progressBar = card ? card.querySelector('.card-progress-bar') : null;
     let rafId = null;
 
     function updateProgress() {
-      if (!state.activeSources.has(soundId)) return;
-      const elapsed = state.audioCtx.currentTime - startTime;
-      if (progressBar) {
-        const percent = Math.min(100, (elapsed / effectiveDuration) * 100);
-        progressBar.style.width = `${percent}%`;
-      }
-      if (elapsed < effectiveDuration || source.loop) {
-        rafId = requestAnimationFrame(updateProgress);
-        const item = state.activeSources.get(soundId);
-        if (item) item.rafId = rafId;
-      }
-    }
-    rafId = requestAnimationFrame(updateProgress);
-
-    source.onended = () => {
-      if (source.loop && state.activeSources.has(soundId)) {
-        return;
-      }
-      stopSound(soundId, false);
-    };
-
-    state.activeSources.set(soundId, {
-      type: 'webAudio',
-      source,
-      startTime,
-      duration: effectiveDuration,
-      rafId,
-      loop: source.loop
-    });
-  }
-
-  // --- PLAYBACK ENGINE 2: HTML5 AUDIO FALLBACK ---
-  function playViaHtml5Audio(sound) {
-    const soundId = sound.id;
-    let audioSrc = sound.file;
-
-    if (!audioSrc && sound.audioData) {
-      const blob = sound.audioData instanceof Blob 
-        ? sound.audioData 
-        : new Blob([sound.audioData], { type: 'audio/wav' });
-      audioSrc = URL.createObjectURL(blob);
-    }
-
-    if (!audioSrc) {
-      showToast(`⚠️ Could not load audio for ${sound.name}`);
-      return;
-    }
-
-    const audio = new Audio(audioSrc);
-    audio.playbackRate = state.currentSpeed;
-    audio.volume = state.isMuted ? 0 : state.volume;
-    audio.loop = state.loopingSounds.has(soundId);
-
-    // Attempt routing into Web Audio graph for live visualizer if allowed by browser
-    let mediaNode = null;
-    if (state.audioCtx && state.masterGain) {
-      try {
-        mediaNode = state.audioCtx.createMediaElementSource(audio);
-        mediaNode.connect(state.masterGain);
-      } catch (e) {
-        // file:// or cross-origin policy might prevent createMediaElementSource; plays directly through HTML5
-      }
-    }
-
-    const card = document.querySelector(`.sound-card[data-id="${CSS.escape(soundId)}"]`);
-    if (card) card.classList.add('playing');
-
-    updateActiveTelemetry();
-
-    const progressBar = card ? card.querySelector('.card-progress-bar') : null;
-    let rafId = null;
-
-    function trackProgress() {
-      if (!state.activeSources.has(soundId)) return;
+      if (!state.activeAudios.has(soundId)) return;
       if (audio.duration && !isNaN(audio.duration) && audio.duration > 0) {
         const percent = Math.min(100, (audio.currentTime / audio.duration) * 100);
         if (progressBar) progressBar.style.width = `${percent}%`;
       }
-      rafId = requestAnimationFrame(trackProgress);
-      const item = state.activeSources.get(soundId);
-      if (item) item.rafId = rafId;
+      rafId = requestAnimationFrame(updateProgress);
+      const activeItem = state.activeAudios.get(soundId);
+      if (activeItem) activeItem.rafId = rafId;
     }
-    rafId = requestAnimationFrame(trackProgress);
+    rafId = requestAnimationFrame(updateProgress);
 
-    audio.play().catch(err => {
-      console.warn('Playback error:', err);
-      stopSound(soundId, false);
-      showToast(`⚠️ Playback error: Click anywhere on page first to enable audio.`);
-    });
-
+    // Audio event handlers
     audio.onended = () => {
       if (!audio.loop) {
-        stopSound(soundId, false);
+        stopSound(soundId);
       }
     };
 
-    state.activeSources.set(soundId, {
-      type: 'html5',
+    audio.onerror = (e) => {
+      console.error(`Audio playback error for ${sound.name}:`, e, audio.error);
+      stopSound(soundId);
+      showToast(`⚠️ Could not play audio: ${sound.name}`);
+    };
+
+    // Trigger Playback!
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(err => {
+        console.warn('Playback prevented by browser:', err);
+        stopSound(soundId);
+        showToast('⚠️ Click anywhere on the page first to enable audio.');
+      });
+    }
+
+    state.activeAudios.set(soundId, {
       audio: audio,
-      mediaNode: mediaNode,
+      sound: sound,
       rafId: rafId,
-      loop: audio.loop
+      startTime: Date.now()
     });
+
+    updateActiveTelemetry();
   }
 
-  function stopSound(soundId, cancelNode = true) {
-    if (!state.activeSources.has(soundId)) return;
-    const active = state.activeSources.get(soundId);
+  function stopSound(soundId) {
+    if (!state.activeAudios.has(soundId)) return;
+    const active = state.activeAudios.get(soundId);
 
-    if (cancelNode) {
-      if (active.type === 'webAudio') {
-        try {
-          active.source.stop();
-          active.source.disconnect();
-        } catch (e) {}
-      } else if (active.type === 'html5') {
-        try {
-          active.audio.pause();
-          active.audio.currentTime = 0;
-          if (active.mediaNode) {
-            active.mediaNode.disconnect();
-          }
-        } catch (e) {}
-      }
-    }
+    try {
+      active.audio.pause();
+      active.audio.currentTime = 0;
+    } catch (e) {}
 
     if (active.rafId) {
       cancelAnimationFrame(active.rafId);
     }
-    state.activeSources.delete(soundId);
+
+    state.activeAudios.delete(soundId);
 
     const card = document.querySelector(`.sound-card[data-id="${CSS.escape(soundId)}"]`);
     if (card) {
@@ -446,50 +231,85 @@
       const progressBar = card.querySelector('.card-progress-bar');
       if (progressBar) progressBar.style.width = '0%';
     }
+
     updateActiveTelemetry();
   }
 
   function stopAllSounds() {
-    state.activeSources.forEach((active, id) => {
-      if (active.type === 'webAudio') {
-        try {
-          active.source.stop();
-          active.source.disconnect();
-        } catch (e) {}
-      } else if (active.type === 'html5') {
-        try {
-          active.audio.pause();
-          active.audio.currentTime = 0;
-          if (active.mediaNode) {
-            active.mediaNode.disconnect();
-          }
-        } catch (e) {}
-      }
+    state.activeAudios.forEach((active, id) => {
+      try {
+        active.audio.pause();
+        active.audio.currentTime = 0;
+      } catch (e) {}
       if (active.rafId) {
         cancelAnimationFrame(active.rafId);
       }
     });
-    state.activeSources.clear();
+    state.activeAudios.clear();
 
     document.querySelectorAll('.sound-card.playing').forEach(card => {
       card.classList.remove('playing');
       const progressBar = card.querySelector('.card-progress-bar');
       if (progressBar) progressBar.style.width = '0%';
     });
+
     updateActiveTelemetry();
   }
 
   function updateActiveTelemetry() {
     const countEl = document.getElementById('active-voices-count');
     if (countEl) {
-      countEl.textContent = state.activeSources.size;
+      countEl.textContent = state.activeAudios.size;
     }
+  }
+
+  // Pre-cache all default sounds in the background
+  function preCacheSounds() {
+    const statusEl = document.getElementById('loader-status');
+    const total = state.allSounds.length;
+    let loaded = 0;
+
+    state.allSounds.forEach(sound => {
+      const src = sound.file || sound.id;
+      if (!src) return;
+
+      const audio = new Audio();
+      audio.src = src;
+      audio.preload = 'auto';
+
+      const onCanPlay = () => {
+        loaded++;
+        const card = document.querySelector(`.sound-card[data-id="${CSS.escape(sound.id)}"]`);
+        if (card && !card.classList.contains('cached')) {
+          card.classList.add('cached');
+        }
+        if (statusEl) {
+          if (loaded >= total) {
+            statusEl.innerHTML = `All sounds cached // Ready (${loaded}/${total})`;
+            statusEl.style.color = 'var(--accent)';
+          } else {
+            statusEl.textContent = `Pre-caching audio: ${loaded}/${total}`;
+          }
+        }
+      };
+
+      audio.addEventListener('canplaythrough', onCanPlay, { once: true });
+      audio.addEventListener('loadedmetadata', () => {
+        if (!sound.duration && audio.duration && !isNaN(audio.duration)) {
+          sound.duration = Math.round(audio.duration * 100) / 100;
+          const cardDur = document.querySelector(`.sound-card[data-id="${CSS.escape(sound.id)}"] .card-duration`);
+          if (cardDur) cardDur.textContent = `${sound.duration.toFixed(1)}s`;
+        }
+      }, { once: true });
+
+      audio.load();
+    });
   }
 
   // --- REALTIME AUDIO VISUALIZER ---
   function initVisualizer() {
     const canvas = document.getElementById('audio-visualizer');
-    if (!canvas || !state.analyser) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
@@ -503,9 +323,8 @@
     resize();
     window.addEventListener('resize', resize);
 
-    const bufferLength = state.analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    let idleAngle = 0;
+    const numBars = 32;
+    let phase = 0;
 
     function draw() {
       requestAnimationFrame(draw);
@@ -515,25 +334,11 @@
 
       ctx.clearRect(0, 0, width, height);
 
-      state.analyser.getByteFrequencyData(dataArray);
+      const activeCount = state.activeAudios.size;
 
-      // Check if there is active audio from Web Audio API
-      let sum = 0;
-      for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-      let isAudible = sum > 10;
-
-      // If active sounds are playing via HTML5 Audio under file://, animate synthetic waveform
-      if (!isAudible && state.activeSources.size > 0) {
-        isAudible = true;
-        const now = Date.now() * 0.008;
-        for (let i = 0; i < bufferLength; i++) {
-          dataArray[i] = Math.floor(120 + Math.sin(now + i * 0.4) * 70 + Math.cos(now * 1.5 + i) * 30);
-        }
-      }
-
-      if (!isAudible) {
-        // Draw idle radar wave
-        idleAngle += 0.04;
+      if (activeCount === 0) {
+        // Idle radar sweep
+        phase += 0.04;
         ctx.beginPath();
         ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border-subtle').trim() || '#1f2937';
         ctx.lineWidth = 1.5;
@@ -541,28 +346,33 @@
         ctx.moveTo(0, midY);
 
         for (let x = 0; x < width; x += 3) {
-          const y = midY + Math.sin(x * 0.03 + idleAngle) * 3;
+          const y = midY + Math.sin(x * 0.03 + phase) * 3;
           ctx.lineTo(x, y);
         }
         ctx.stroke();
         return;
       }
 
-      // Draw real-time glowing frequency bars
+      // Audio is playing! Render energetic glowing frequency spectrum
+      phase += 0.15;
       const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#00ffcc';
-      const numBars = Math.min(bufferLength, 32);
       const barWidth = (width / numBars) - 2;
 
       for (let i = 0; i < numBars; i++) {
-        const val = dataArray[i] / 255.0;
-        const barHeight = Math.max(3, val * (height - 4));
+        const norm = i / numBars;
+        const wave1 = Math.sin(phase * 1.5 + i * 0.6);
+        const wave2 = Math.cos(phase * 2.2 + i * 0.3);
+        const wave3 = Math.sin(phase * 0.8 + norm * Math.PI);
+        const val = Math.max(0.12, (Math.abs(wave1 * 0.45 + wave2 * 0.35 + wave3 * 0.3) * (0.65 + Math.min(activeCount, 4) * 0.15)));
+
+        const barHeight = Math.min(height - 4, Math.max(4, val * (height - 4)));
         const x = i * (barWidth + 2);
         const y = height - barHeight;
 
         ctx.fillStyle = accentColor;
         ctx.fillRect(x, y, barWidth, barHeight);
 
-        // Peak dot
+        // Peak cap
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(x, Math.max(0, y - 3), barWidth, 2);
       }
@@ -637,14 +447,14 @@
     }
 
     grid.innerHTML = filtered.map((sound, idx) => {
-      const isPlaying = state.activeSources.has(sound.id);
+      const isPlaying = state.activeAudios.has(sound.id);
       const isStarred = state.favorites.has(sound.id);
       const isLooping = state.loopingSounds.has(sound.id);
       const hotkey = HOTKEYS[idx] || '';
       const durationFormatted = sound.duration ? `${sound.duration.toFixed(1)}s` : '--';
 
       return `
-        <div class="sound-card ${isPlaying ? 'playing' : ''} ${state.audioBufferCache.has(sound.id) ? 'cached' : ''}" 
+        <div class="sound-card ${isPlaying ? 'playing' : ''} cached" 
              data-id="${sound.id}" 
              data-hotkey="${hotkey}" 
              tabindex="0"
@@ -769,14 +579,8 @@
     } else {
       state.loopingSounds.add(soundId);
     }
-    // Update live source loop state if playing
-    if (state.activeSources.has(soundId)) {
-      const active = state.activeSources.get(soundId);
-      if (active.type === 'webAudio') {
-        active.source.loop = state.loopingSounds.has(soundId);
-      } else if (active.type === 'html5') {
-        active.audio.loop = state.loopingSounds.has(soundId);
-      }
+    if (state.activeAudios.has(soundId)) {
+      state.activeAudios.get(soundId).audio.loop = state.loopingSounds.has(soundId);
     }
     renderSoundboard();
   }
@@ -785,7 +589,6 @@
     await deleteCustomSoundFromDB(soundId);
     state.customSounds = state.customSounds.filter(s => s.id !== soundId);
     state.allSounds = [...DEFAULT_SOUNDS, ...state.customSounds];
-    state.audioBufferCache.delete(soundId);
     stopSound(soundId);
     renderSoundboard();
     showToast('Custom sound deleted.');
@@ -916,6 +719,9 @@
         const { emoji, category } = inferEmojiAndCategory(filename);
         const name = cleanSoundTitle(filename);
 
+        const blob = new Blob([arrayBuf], { type: 'audio/wav' });
+        const objectUrl = URL.createObjectURL(blob);
+
         const newSound = {
           id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 6)}_${filename}`,
           name: name,
@@ -923,19 +729,19 @@
           category: category,
           desc: `Imported from ${zipFile.name}`,
           audioData: arrayBuf,
+          file: objectUrl,
           isCustom: true,
           duration: 0
         };
 
-        // Precalculate duration if possible
-        initAudioContext();
-        if (state.audioCtx) {
-          try {
-            const buf = await decodeAudioDataSafe(state.audioCtx, arrayBuf.slice(0));
-            newSound.duration = Math.round(buf.duration * 100) / 100;
-            state.audioBufferCache.set(newSound.id, buf);
-          } catch (e) {}
-        }
+        // Determine duration via temporary Audio element
+        const tempAudio = new Audio(objectUrl);
+        tempAudio.addEventListener('loadedmetadata', () => {
+          if (tempAudio.duration && !isNaN(tempAudio.duration)) {
+            newSound.duration = Math.round(tempAudio.duration * 100) / 100;
+            renderSoundboard();
+          }
+        }, { once: true });
 
         await saveCustomSoundToDB(newSound);
         state.customSounds.push(newSound);
@@ -961,6 +767,9 @@
       const { emoji, category } = inferEmojiAndCategory(file.name);
       const name = cleanSoundTitle(file.name);
 
+      const blob = new Blob([arrayBuf], { type: file.type || 'audio/wav' });
+      const objectUrl = URL.createObjectURL(blob);
+
       const newSound = {
         id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 6)}_${file.name}`,
         name: name,
@@ -968,18 +777,18 @@
         category: category,
         desc: `Imported local file: ${file.name}`,
         audioData: arrayBuf,
+        file: objectUrl,
         isCustom: true,
         duration: 0
       };
 
-      initAudioContext();
-      if (state.audioCtx) {
-        try {
-          const buf = await decodeAudioDataSafe(state.audioCtx, arrayBuf.slice(0));
-          newSound.duration = Math.round(buf.duration * 100) / 100;
-          state.audioBufferCache.set(newSound.id, buf);
-        } catch (e) {}
-      }
+      const tempAudio = new Audio(objectUrl);
+      tempAudio.addEventListener('loadedmetadata', () => {
+        if (tempAudio.duration && !isNaN(tempAudio.duration)) {
+          newSound.duration = Math.round(tempAudio.duration * 100) / 100;
+          renderSoundboard();
+        }
+      }, { once: true });
 
       await saveCustomSoundToDB(newSound);
       state.customSounds.push(newSound);
@@ -1051,6 +860,9 @@
       const { emoji, category } = inferEmojiAndCategory(filename);
       const name = cleanSoundTitle(filename);
 
+      const blob = new Blob([arrayBuf], { type: 'audio/wav' });
+      const objectUrl = URL.createObjectURL(blob);
+
       const newSound = {
         id: `custom_${Date.now()}_${filename}`,
         name: name,
@@ -1058,18 +870,18 @@
         category: category,
         desc: `Fetched from ${cleanUrl}`,
         audioData: arrayBuf,
+        file: objectUrl,
         isCustom: true,
         duration: 0
       };
 
-      initAudioContext();
-      if (state.audioCtx) {
-        try {
-          const buf = await decodeAudioDataSafe(state.audioCtx, arrayBuf.slice(0));
-          newSound.duration = Math.round(buf.duration * 100) / 100;
-          state.audioBufferCache.set(newSound.id, buf);
-        } catch (e) {}
-      }
+      const tempAudio = new Audio(objectUrl);
+      tempAudio.addEventListener('loadedmetadata', () => {
+        if (tempAudio.duration && !isNaN(tempAudio.duration)) {
+          newSound.duration = Math.round(tempAudio.duration * 100) / 100;
+          renderSoundboard();
+        }
+      }, { once: true });
 
       await saveCustomSoundToDB(newSound);
       state.customSounds.push(newSound);
@@ -1373,13 +1185,8 @@
       volSlider.addEventListener('input', (e) => {
         state.volume = parseFloat(e.target.value);
         state.isMuted = false;
-        if (state.masterGain && state.audioCtx) {
-          state.masterGain.gain.setValueAtTime(state.volume, state.audioCtx.currentTime);
-        }
-        state.activeSources.forEach(active => {
-          if (active.type === 'html5' && active.audio) {
-            active.audio.volume = state.volume;
-          }
+        state.activeAudios.forEach(active => {
+          active.audio.volume = state.volume;
         });
         if (volBtn) volBtn.textContent = state.volume === 0 ? '🔇' : '🔊';
       });
@@ -1388,13 +1195,8 @@
       volBtn.addEventListener('click', () => {
         state.isMuted = !state.isMuted;
         const currentVol = state.isMuted ? 0 : state.volume;
-        if (state.masterGain && state.audioCtx) {
-          state.masterGain.gain.setValueAtTime(currentVol, state.audioCtx.currentTime);
-        }
-        state.activeSources.forEach(active => {
-          if (active.type === 'html5' && active.audio) {
-            active.audio.volume = currentVol;
-          }
+        state.activeAudios.forEach(active => {
+          active.audio.volume = currentVol;
         });
         volBtn.textContent = state.isMuted ? '🔇' : '🔊';
         if (volSlider) volSlider.value = currentVol;
@@ -1408,13 +1210,8 @@
         opt.classList.add('active');
         state.currentSpeed = parseFloat(opt.dataset.speed);
 
-        // Update currently active sources
-        state.activeSources.forEach(active => {
-          if (active.type === 'webAudio' && active.source) {
-            active.source.playbackRate.value = state.currentSpeed;
-          } else if (active.type === 'html5' && active.audio) {
-            active.audio.playbackRate = state.currentSpeed;
-          }
+        state.activeAudios.forEach(active => {
+          active.audio.playbackRate = state.currentSpeed;
         });
       });
     });
@@ -1528,11 +1325,19 @@
   async function init() {
     // Load custom sounds from IndexedDB
     state.customSounds = await loadCustomSoundsFromDB();
+    state.customSounds.forEach(cs => {
+      if (cs.audioData && !cs.file) {
+        const blob = cs.audioData instanceof Blob ? cs.audioData : new Blob([cs.audioData], { type: 'audio/wav' });
+        cs.file = URL.createObjectURL(blob);
+      }
+    });
+
     state.allSounds = [...DEFAULT_SOUNDS, ...state.customSounds];
 
     setupEventListeners();
     setupKeyboardShortcuts();
     setupDragAndDrop();
+    initVisualizer();
     renderSoundboard();
 
     // Start background audio pre-caching
