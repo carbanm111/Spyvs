@@ -4,6 +4,21 @@ An interactive, zero-latency web soundboard featuring sound effects ripped from 
 
 ### 🚀 [LAUNCH LIVE SOUNDBOARD APP](https://carbanm111.github.io/Spyvs/)
 
+
+
+🕵️‍♂️ Project Overview
+What it is: A zero-latency, interactive web-based soundboard featuring 25 authentic sound effects extracted directly from the Spy vs. Spy PlayStation 2 game.
+
+How it was made: Built using vanilla HTML, CSS, and modern JavaScript, styled in a dark-mode 5-column grid layout. It leverages native HTML5 Audio pre-loading to buffer all .wav files into browser memory instantly upon loading, eliminating lag. It also includes dynamic state tracking (clicking a playing sound stops it immediately) and a master global Stop All button. The project is hosted live via GitHub Pages with an accompanying documentation README.md.
+
+How to use it:
+
+Open the live soundboard link (or embed the index.html code into projects like Google Sites).
+
+Click any sound button to play it instantly.
+
+Click a playing button again (or the ⏹ STOP ALL button at the top) to silence the audio immediately.
+
 ---
 
 ## 🎵 Direct Sound Index
