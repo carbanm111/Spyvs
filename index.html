@@ -3,249 +3,292 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Spy vs. Spy Soundboard</title>
-  <style>
-    * {
-      box-sizing: border-box;
-    }
-    body {
-      background-color: #0a0a0a;
-      color: #ffffff;
-      font-family: 'Courier New', Courier, monospace;
-      margin: 0;
-      padding: 40px 20px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-    }
-
-    .soundboard-container {
-      background: #111111;
-      padding: 28px;
-      border-radius: 12px;
-      color: #ffffff;
-      width: 100%;
-      max-width: 850px;
-      border: 1px solid #222222;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.8);
-    }
-
-    .soundboard-container h1 {
-      margin-top: 0;
-      margin-bottom: 8px;
-      font-size: 18px;
-      letter-spacing: 3px;
-      color: #00ffcc;
-      text-transform: uppercase;
-      text-align: center;
-    }
-
-    .loader-status {
-      font-size: 11px;
-      color: #888888;
-      text-align: center;
-      margin-bottom: 16px;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-    }
-
-    .control-bar {
-      display: flex;
-      justify-content: center;
-      margin-bottom: 22px;
-    }
-
-    .stop-btn {
-      background: #2a1111;
-      color: #ff5555;
-      border: 1px solid #ff3333;
-      padding: 12px 28px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 12px;
-      font-weight: bold;
-      letter-spacing: 2px;
-      transition: all 0.15s ease-in-out;
-      user-select: none;
-    }
-
-    .stop-btn:hover {
-      background: #ff3333;
-      color: #ffffff;
-      box-shadow: 0 0 15px rgba(255, 51, 51, 0.5);
-    }
-
-    .stop-btn:active {
-      transform: scale(0.95);
-    }
-
-    .soundboard-grid {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 12px;
-    }
-
-    .sound-btn {
-      background: #181818;
-      color: #555555;
-      border: 1px solid #252525;
-      padding: 16px 8px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 11px;
-      text-align: center;
-      transition: all 0.15s ease-in-out;
-      user-select: none;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .sound-btn.cached {
-      color: #dddddd;
-      border-color: #333333;
-      background: #1c1c1c;
-    }
-
-    .sound-btn.cached:hover {
-      background: #00ffcc;
-      color: #000000;
-      border-color: #00ffcc;
-      font-weight: bold;
-      box-shadow: 0 0 12px rgba(0, 255, 204, 0.4);
-    }
-
-    .sound-btn.playing {
-      background: #00ffcc !important;
-      color: #000000 !important;
-      border-color: #00ffcc !important;
-      font-weight: bold;
-      box-shadow: 0 0 15px rgba(0, 255, 204, 0.6);
-    }
-
-    .sound-btn:active {
-      transform: scale(0.96);
-    }
-
-    @media (max-width: 700px) {
-      .soundboard-grid {
-        grid-template-columns: repeat(3, 1fr);
-      }
-    }
-
-    @media (max-width: 450px) {
-      .soundboard-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-  </style>
+  <title>SPY VS. SPY // AUDIO TERMINAL</title>
+  <meta name="description" content="Ultra-clean, zero-latency interactive Spy vs. Spy soundboard with audio visualizer, zip extractor, and Sounds Resource file import.">
+  
+  <!-- Modern Clean Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
-<div class="soundboard-container">
-  <h1>SPY VS. SPY // SOUNDBOARD</h1>
-  <div id="loader-status" class="loader-status">Pre-caching audio files...</div>
+<div class="app-wrapper">
   
-  <div class="control-bar">
-    <button id="stop-all-btn" class="stop-btn">⏹ STOP ALL</button>
-  </div>
+  <!-- ===================================================================
+       HEADER & VISUALIZER PANEL
+       =================================================================== -->
+  <header class="header-panel">
+    <div class="header-top">
+      
+      <!-- Brand & Title -->
+      <div class="brand-section">
+        <div class="spy-logo" title="Spy vs. Spy Classified HQ">
+          <!-- Stylized Spy Hat & Trenchcoat Mask Icon -->
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2L2 7l10 2 10-2-10-2zm0 4.2L5.8 7.5 12 8.7l6.2-1.2L12 6.2zM3 10v2c0 4.4 3.6 8 8 8s8-3.6 8-8v-2l-8 2-8-2zm8 14c-3.1 0-5.8-1.8-7.1-4.4l1.8-1c1 1.9 3 3.4 5.3 3.4s4.3-1.5 5.3-3.4l1.8 1C17.8 22.2 15.1 24 12 24z"/>
+          </svg>
+        </div>
+        <div class="brand-titles">
+          <h1>SPY VS. SPY <span class="accent-tag">// TERMINAL</span></h1>
+          <div class="subtitle">TACTICAL AUDIO SOUNDBOARD & RESOURCE INGESTOR</div>
+        </div>
+      </div>
 
-  <div class="soundboard-grid">
-    <button class="sound-btn" data-src="./DATA_00000.wav">🙀 Yeoww</button>
-    <button class="sound-btn" data-src="./DATA_00149.wav">💻 Hack & Break</button>
-    <button class="sound-btn" data-src="./DATA_00164.wav">🕳️ Spy Hole</button>
-    <button class="sound-btn" data-src="./DATA_00174.wav">🔑 Ignition</button>
-    <button class="sound-btn" data-src="./DATA_00189.wav">🚗 Engine Starting</button>
-    <button class="sound-btn" data-src="./DATA_00200.wav">⌨️ Typing</button>
-    <button class="sound-btn" data-src="./DATA_00212.wav">🔫 Laser</button>
-    <button class="sound-btn" data-src="./DATA_00221.wav">⏲️ Bom Timer</button>
-    <button class="sound-btn" data-src="./DATA_00250.wav">🐒 Monkey Laugh</button>
-    <button class="sound-btn" data-src="./DATA_00252.wav">😈 Mwahahaha</button>
-    <button class="sound-btn" data-src="./DATA_00264.wav">🚪 Electronic Door</button>
-    <button class="sound-btn" data-src="./DATA_00271.wav">📡 Scanning</button>
-    <button class="sound-btn" data-src="./DATA_00275.wav">🛎️ Bell</button>
-    <button class="sound-btn" data-src="./DATA_00295.wav">🦹 Evil Laugh</button>
-    <button class="sound-btn" data-src="./DATA_00301.wav">🗣️ Chatter</button>
-    <button class="sound-btn" data-src="./DATA_00329.wav">⚡ Electrocution</button>
-    <button class="sound-btn" data-src="./DATA_00386.wav">🚁 Helicopter Leave</button>
-    <button class="sound-btn" data-src="./DATA_00402.wav">💥 Bomb/Boom</button>
-    <button class="sound-btn" data-src="./DATA_00405.wav">🐣 Chirp</button>
-    <button class="sound-btn" data-src="./DATA_00408.wav">🌀 Spring</button>
-    <button class="sound-btn" data-src="./DATA_00416.wav">📞 Phone Dial</button>
-    <button class="sound-btn" data-src="./DATA_00418.wav">💧 Plonk</button>
-    <button class="sound-btn" data-src="./DATA_00419.wav">🚰 Valve/Yell</button>
-    <button class="sound-btn" data-src="./DATA_00424.wav">💥 Pew-Gun</button>
-    <button class="sound-btn" data-src="./DATA_00425.wav">📢 Bike Horn</button>
+      <!-- Header Action Controls -->
+      <div class="header-actions">
+        <!-- Master Volume Control -->
+        <div class="volume-control-box" title="Master Volume">
+          <button id="volume-mute-btn" class="vol-icon-btn" title="Toggle Mute">🔊</button>
+          <input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.05" value="1">
+        </div>
+
+        <!-- Playback Speed / Pitch -->
+        <div class="speed-selector" title="Playback Speed / Pitch">
+          <button class="speed-opt" data-speed="0.75">0.75x</button>
+          <button class="speed-opt active" data-speed="1.0">1x</button>
+          <button class="speed-opt" data-speed="1.25">1.25x</button>
+          <button class="speed-opt" data-speed="1.5">1.5x</button>
+        </div>
+
+        <!-- Theme Picker -->
+        <select id="theme-picker" class="theme-picker-select" title="Interface Theme">
+          <option value="shadow">SHADOW AGENT</option>
+          <option value="noir">MAD NOIR (B&W)</option>
+          <option value="crt">CRT TERMINAL</option>
+        </select>
+
+        <!-- Import / Pull Sounds Button -->
+        <button id="import-open-btn" class="btn btn-primary" title="Pull in sound files from Sounds Resource or computer">
+          <span>📥</span> PULL SOUNDS
+        </button>
+
+        <!-- Global Master Stop Button -->
+        <button id="stop-all-btn" class="btn btn-danger" title="Stop all playing audio (Shortcut: Space)">
+          <span>⏹</span> STOP ALL
+        </button>
+      </div>
+
+    </div>
+
+    <!-- Realtime Audio Visualizer Strip -->
+    <div class="visualizer-strip">
+      <div class="canvas-container">
+        <canvas id="audio-visualizer"></canvas>
+      </div>
+      <div class="status-telemetry">
+        <div class="status-tag">
+          <span class="status-dot"></span>
+          <span id="loader-status">CONNECTING AUDIO ENGINE...</span>
+        </div>
+        <div>SOUNDS: <strong id="total-sounds-count">27</strong></div>
+        <div>ACTIVE: <strong id="active-voices-count">0</strong></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================================================================
+       TOOLBAR: SEARCH, CATEGORIES & VIEW SWITCHES
+       =================================================================== -->
+  <section class="toolbar-panel">
+    
+    <div class="search-and-controls">
+      <!-- Search Input -->
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search-input" class="search-input" placeholder="Search sound name, code, category... [ / ]" autocomplete="off" spellcheck="false">
+        <button id="search-clear-btn" class="search-clear-btn" title="Clear Search">✕</button>
+        <span class="search-shortcut-badge">/</span>
+      </div>
+
+      <!-- Action Toggles -->
+      <div class="toolbar-toggles">
+        <button id="playback-mode-toggle" class="btn btn-ghost" title="Switch between Multi-Sound and Solo mode">🔀 MULTI</button>
+        <button id="hotkey-toggle-btn" class="btn btn-ghost" title="Toggle visible hotkey badges">⌨️ KEYS ON</button>
+        <button id="view-mode-toggle" class="btn btn-ghost" title="Toggle Grid / List view">▦ GRID</button>
+        <button id="random-sound-btn" class="btn btn-ghost" title="Trigger a random sound effect [R]">🎲 RANDOM</button>
+      </div>
+    </div>
+
+    <!-- Category Filter Pills -->
+    <div class="categories-strip">
+      <button class="cat-pill active" data-category="all">
+        <span>⚡ ALL SOUNDS</span>
+        <span class="cat-count">27</span>
+      </button>
+      <button class="cat-pill" data-category="reactions">
+        <span>🙀 REACTIONS & LAUGHS</span>
+        <span class="cat-count">6</span>
+      </button>
+      <button class="cat-pill" data-category="weapons">
+        <span>💥 WEAPONS & TRAPS</span>
+        <span class="cat-count">7</span>
+      </button>
+      <button class="cat-pill" data-category="gadgets">
+        <span>🚁 GADGETS & VEHICLES</span>
+        <span class="cat-count">5</span>
+      </button>
+      <button class="cat-pill" data-category="tech">
+        <span>💻 TECH & TERMINAL</span>
+        <span class="cat-count">4</span>
+      </button>
+      <button class="cat-pill" data-category="foley">
+        <span>🛎️ FOLEY & SFX</span>
+        <span class="cat-count">5</span>
+      </button>
+      <button class="cat-pill" data-category="favorites">
+        <span>⭐ FAVORITES</span>
+        <span class="cat-count">0</span>
+      </button>
+      <button class="cat-pill" data-category="custom">
+        <span>📥 CUSTOM / IMPORTED</span>
+        <span class="cat-count">0</span>
+      </button>
+    </div>
+
+  </section>
+
+  <!-- ===================================================================
+       SOUNDBOARD GRID CONTAINER
+       =================================================================== -->
+  <main id="soundboard-grid" class="soundboard-grid" aria-label="Spy Soundboard Grid">
+    <!-- Sound cards injected dynamically via JavaScript -->
+  </main>
+
+  <!-- ===================================================================
+       FOOTER & KEYBOARD SHORTCUTS HINTS
+       =================================================================== -->
+  <footer class="footer-bar">
+    <div class="hotkey-hints">
+      <span class="hotkey-item"><kbd>SPACE</kbd> Stop All</span>
+      <span class="hotkey-item"><kbd>1 - 9 / A - Z</kbd> Trigger Sound</span>
+      <span class="hotkey-item"><kbd>/</kbd> Focus Search</span>
+      <span class="hotkey-item"><kbd>R</kbd> Random Sound</span>
+      <span class="hotkey-item"><kbd>ESC</kbd> Close / Clear</span>
+    </div>
+    <div>SPY VS. SPY PS2 RIP ARCHIVE // CLIENT-SIDE ZERO LATENCY</div>
+  </footer>
+
+</div>
+
+<!-- Toast Container -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ===================================================================
+     FULLSCREEN DRAG & DROP OVERLAY
+     =================================================================== -->
+<div id="global-drag-overlay" class="global-drag-overlay">
+  <div class="global-drag-icon">📦</div>
+  <div class="global-drag-title">DROP SOUND ARCHIVE OR AUDIO FILES HERE</div>
+  <div class="global-drag-subtitle">Supports .ZIP from Sounds Resource, or raw .WAV, .MP3, .OGG, .FLAC</div>
+</div>
+
+<!-- ===================================================================
+     IMPORT / PULL SOUNDS MODAL
+     =================================================================== -->
+<div id="import-modal" class="modal-backdrop">
+  <div class="modal-window">
+    
+    <div class="modal-header">
+      <h2><span>📥</span> PULL & IMPORT SOUND ASSETS</h2>
+      <button class="modal-close-btn" title="Close">✕</button>
+    </div>
+
+    <!-- Modal Navigation Tabs -->
+    <div class="modal-tabs">
+      <button class="modal-tab-btn active" data-tab="tab-upload">DROP / UNPACK ZIP</button>
+      <button class="modal-tab-btn" data-tab="tab-url">PULL FROM URL</button>
+      <button class="modal-tab-btn" data-tab="tab-manage">CUSTOM LIBRARY</button>
+    </div>
+
+    <div class="modal-body">
+      
+      <!-- TAB 1: DROP / UNPACK ZIP (SOUNDS RESOURCE SPECIFIC) -->
+      <div id="tab-upload" class="modal-tab-pane" style="display: flex; flex-direction: column; gap: 16px;">
+        
+        <!-- The Sounds Resource Helper Card -->
+        <div id="spriters-notice-box" class="spriters-notice-card">
+          <div class="spriters-notice-header">
+            <h4><span>🕵️‍♂️</span> The Sounds Resource (PlayStation 2 // Asset 452648)</h4>
+            <a href="https://sounds.spriters-resource.com/playstation_2/spyvsspy/asset/452648/" 
+               target="_blank" 
+               rel="noopener noreferrer" 
+               class="btn btn-primary" 
+               style="font-size: 11px; padding: 5px 10px;">
+              OPEN ASSET PAGE ↗
+            </a>
+          </div>
+          <p>
+            Asset <strong>#452648</strong> contains the sound effect rips from <em>Spy vs. Spy (PS2)</em>. 
+            Because The Sounds Resource utilizes Cloudflare protection, direct scraping is guarded. 
+            Importing is instant with 2 clicks:
+          </p>
+          <ol class="spriters-step-list">
+            <li>Click <strong>Open Asset Page ↗</strong> above.</li>
+            <li>Click the <strong>Download Asset / ZIP</strong> button on their page.</li>
+            <li>Drag & drop the downloaded <code>.zip</code> file right into the box below!</li>
+          </ol>
+        </div>
+
+        <!-- Dropzone Area -->
+        <div id="modal-dropzone" class="dropzone-box">
+          <div class="dropzone-icon">📁</div>
+          <div class="dropzone-title">DROP ASSET .ZIP OR AUDIO FILES HERE</div>
+          <div class="dropzone-subtitle">Click to select files, or drag and drop any .zip, .wav, .mp3, .ogg</div>
+          <input type="file" id="modal-file-picker" multiple accept=".zip,.wav,.mp3,.ogg,.flac,.m4a,.aac" style="display: none;">
+        </div>
+
+      </div>
+
+      <!-- TAB 2: PULL FROM URL -->
+      <div id="tab-url" class="modal-tab-pane" style="display: none; flex-direction: column; gap: 16px;">
+        <p style="font-size: 12px; color: var(--text-dim); line-height: 1.6;">
+          Enter any direct audio file URL (or sound package URL). The app will automatically attempt direct retrieval, and gracefully proxy cross-origin restrictions if blocked by CORS:
+        </p>
+
+        <div class="url-input-group">
+          <label class="url-input-label" for="url-input-field">AUDIO SOURCE URL:</label>
+          <div class="url-input-row">
+            <input type="url" id="url-input-field" class="url-text-input" placeholder="https://example.com/sound.wav or sound_pack.zip">
+            <button id="url-fetch-btn" class="btn btn-primary">FETCH & ADD</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: CUSTOM LIBRARY MANAGEMENT -->
+      <div id="tab-manage" class="modal-tab-pane" style="display: none; flex-direction: column; gap: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 12px; font-weight: 700;">IMPORTED CUSTOM SOUNDS</span>
+          <button id="export-pack-btn" class="btn btn-ghost" style="font-size: 11px;">💾 EXPORT SOUNDBOARD PACK (.JSON)</button>
+        </div>
+        <div id="modal-custom-list" class="custom-list">
+          <!-- Injected via JS -->
+        </div>
+      </div>
+
+    </div>
+
+    <div class="modal-footer">
+      <span style="font-size: 10.5px; color: var(--text-muted);">ALL EXTRACTED SOUNDS ARE PERSISTED LOCALLY IN INDEXEDDB</span>
+      <button class="btn btn-ghost modal-close-btn" style="padding: 6px 14px;">CLOSE</button>
+    </div>
+
   </div>
 </div>
 
+<!-- Scripts -->
+<script src="js/jszip.min.js"></script>
+<!-- CDN Fallback for JSZip if local script is missing -->
 <script>
-  const activeAudioMap = new Map();
-  const buttons = document.querySelectorAll('.sound-btn');
-  const stopBtn = document.getElementById('stop-all-btn');
-  const statusEl = document.getElementById('loader-status');
-  let loadedCount = 0;
-
-  buttons.forEach(button => {
-    const url = button.dataset.src;
-    
-    const preloadAudio = new Audio();
-    preloadAudio.src = url;
-    preloadAudio.preload = 'auto';
-
-    preloadAudio.addEventListener('canplaythrough', () => {
-      if (!button.classList.contains('cached')) {
-        button.classList.add('cached');
-        loadedCount++;
-        if (loadedCount === buttons.length) {
-          statusEl.textContent = "All sounds cached // Ready";
-          statusEl.style.color = "#00ffcc";
-        } else {
-          statusEl.textContent = `Pre-caching audio: ${loadedCount}/${buttons.length}`;
-        }
-      }
-    }, { once: true });
-
-    preloadAudio.load();
-
-    button.addEventListener('click', () => {
-      if (activeAudioMap.has(button)) {
-        const audio = activeAudioMap.get(button);
-        audio.pause();
-        audio.currentTime = 0;
-        activeAudioMap.delete(button);
-        button.classList.remove('playing');
-        return;
-      }
-
-      const audio = new Audio(url);
-      activeAudioMap.set(button, audio);
-      button.classList.add('playing');
-
-      audio.play().catch(err => {
-        console.error("Playback failed:", err);
-        activeAudioMap.delete(button);
-        button.classList.remove('playing');
-      });
-
-      audio.addEventListener('ended', () => {
-        activeAudioMap.delete(button);
-        button.classList.remove('playing');
-      });
-    });
-  });
-
-  stopBtn.addEventListener('click', () => {
-    activeAudioMap.forEach((audio, button) => {
-      audio.pause();
-      audio.currentTime = 0;
-      button.classList.remove('playing');
-    });
-    activeAudioMap.clear();
-  });
+  if (!window.JSZip) {
+    var cdnScript = document.createElement('script');
+    cdnScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    document.head.appendChild(cdnScript);
+  }
 </script>
+<script src="js/app.js"></script>
+
 </body>
 </html>
